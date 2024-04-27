@@ -321,8 +321,9 @@ if __name__ == "__main__":
     result = cdcl_solve(formula)
     if result:
         assert result.satisfy(formula)
-        print("Formula is SAT with assignments:")
-        assignments = {var: assignment.value for var, assignment in result.items()}
-        pprint(assignments)
+        print("sat")
+        sorted_items = sorted(result.items(), key=lambda x: int(x[0]))
+        for var, assignment in sorted_items:
+            print(str(var) + " := " + str(assignment.value).lower())
     else:
-        print("Formula is UNSAT.")
+        print("unsat")
