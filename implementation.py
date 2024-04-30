@@ -3,6 +3,7 @@ import random
 from pprint import pprint
 from dataclasses import dataclass
 from typing import List, Set, Tuple, Optional, Iterator
+import time
 
 
 # frozen to be hashable
@@ -29,13 +30,20 @@ class Clause:
     literals: List[Literal]
 
     def __repr__(self):
-        return "∨".join(map(str, self.literals))
+        return '∨'.join(map(str, self.literals))
 
     def __iter__(self) -> Iterator[Literal]:
         return iter(self.literals)
 
     def __len__(self):
         return len(self.literals)
+
+    def __hash__(self):
+        x = 0 
+        for lit in self.literals:
+            x ^= hash(lit)
+        return x
+
 
 
 @dataclass
@@ -113,6 +121,30 @@ class Assignments(dict):
                 return False
 
         return True
+    
+from collections import defaultdict
+def init_watches(formula: Formula):
+    """
+    Return lit2clauses and clause2lits
+    """
+    
+    lit2clauses = defaultdict(list)
+    clause2lits = defaultdict(list)
+    
+    for clause in formula:
+        if len(clause) == 1:
+            # For unit clause, we watch the only literal
+            lit2clauses[clause.literals[0]].append(clause)
+            clause2lits[clause].append(clause.literals[0])
+        else:
+            # For other clause, we choose any 2 literals to watch
+            lit2clauses[clause.literals[0]].append(clause)
+            lit2clauses[clause.literals[1]].append(clause)
+            clause2lits[clause].append(clause.literals[0])
+            clause2lits[clause].append(clause.literals[1])
+            
+    return lit2clauses, clause2lits
+
 
 
 def cdcl_solve(formula: Formula) -> Optional[Assignments]:
@@ -123,39 +155,69 @@ def cdcl_solve(formula: Formula) -> Optional[Assignments]:
     If UNSAT, return None.
     """
     assignments = Assignments()
-
-    # First, do unit propagation to assign the initial unit clauses
-    reason, clause = unit_propagation(formula, assignments)
-    if reason == "conflict":
+    lit2clauses, clause2lits = init_watches(formula)
+    
+    # First, do unit propagation to assign the initial unit clauses 
+    unit_clauses = [clause for clause in formula if len(clause) == 1]
+    to_propagate = []
+    for clause in unit_clauses:
+        lit = clause.literals[0]
+        var = lit.variable
+        val = not lit.negation
+        if var not in assignments:
+            assignments.assign(var, val, clause)
+            to_propagate.append(lit)
+    
+    reason, clause = unit_propagation(assignments, lit2clauses, clause2lits, to_propagate)
+    if reason == 'conflict':
         return None
 
     while not all_variables_assigned(formula, assignments):
         var, val = pick_branching_variable(formula, assignments)
         assignments.dl += 1
+        #print("DECISION LEVEL = " + str(assignments.dl))
         assignments.assign(var, val, antecedent=None)
+        to_propagate = [Literal(var, not val)]
+        i=0
         while True:
-            reason, clause = unit_propagation(formula, assignments)
-            if reason != "conflict":
+            reason, clause = unit_propagation(assignments, lit2clauses, clause2lits, to_propagate)
+            #i+=1
+            #print("unit propagation #" + str(i))
+
+            if reason != 'conflict':
                 # no conflict after unit propagation, we back
                 # to the decision (guessing) step
                 break
-
+                
             b, learnt_clause = conflict_analysis(clause, assignments)
             if b < 0:
                 return None
-
-            add_learnt_clause(formula, learnt_clause)
+            
+            add_learnt_clause(formula, learnt_clause, assignments, lit2clauses, clause2lits)
             backtrack(assignments, b)
             assignments.dl = b
 
             # The learnt clause must be a unit clause, so the
             # next step must again be unit progagation
+            literal = next(literal for literal in learnt_clause if literal.variable not in assignments)
+            var = literal.variable
+            val = not literal.negation
+            assignments.assign(var, val, antecedent=learnt_clause)
+            to_propagate = [Literal(var, not val)]
 
     return assignments
 
 
-def add_learnt_clause(formula: Formula, clause: Clause):
+
+def add_learnt_clause(formula, clause, assignments, lit2clauses, clause2lits):
     formula.clauses.append(clause)
+    for lit in sorted(clause, key=lambda lit: -assignments[lit.variable].dl):
+        if len(clause2lits[clause]) < 2:
+            clause2lits[clause].append(lit)
+            lit2clauses[lit].append(clause)
+        else:
+            break
+
 
 
 def all_variables_assigned(formula: Formula, assignments: Assignments) -> bool:
@@ -208,33 +270,54 @@ def clause_status(clause: Clause, assignments: Assignments) -> str:
         return "unresolved"
 
 
-def unit_propagation(
-    formula: Formula, assignments: Assignments
-) -> Tuple[str, Optional[Clause]]:
-    # finish is set to True if no unit and conflict clause found in one iteration
-    finish = False
-    while not finish:
-        finish = True
-        for clause in formula:
-            status = clause_status(clause, assignments)
-            if status == "unresolved" or status == "satisfied":
-                continue
-            elif status == "unit":
-                # select the literal to propagate
-                literal = next(
-                    literal for literal in clause if literal.variable not in assignments
-                )
-                var = literal.variable
-                val = not literal.negation
+def unit_propagation(assignments, lit2clauses, clause2lits, to_propagate: List[Literal]) -> Tuple[str, Optional[Clause]]:
+    #print("\nUNIT PROPAGATION\n");
+    while len(to_propagate) > 0:
+        # print("to_propagate length: " + str(len(to_propagate)))
+        watching_lit = to_propagate.pop().neg()
 
-                # assign the variable according to unit rule
-                assignments.assign(var, val, antecedent=clause)
-                finish = False
+        # use list(.) to copy it because size of 
+        # lit2clauses[watching_lit]might change during for-loop
+        watching_clauses = list(lit2clauses[watching_lit])
+        for watching_clause in watching_clauses:
+            for lit in watching_clause:
+                if lit in clause2lits[watching_clause]:
+                    # lit is another watching literal of watching_clause
+                    continue
+                elif lit.variable in assignments and assignments.value(lit) == False:
+                    # lit is a assigned False
+                    continue
+                else:
+                    # lit is not another watching literal of watching_clause
+                    # and is non-False literal, so we rewatch it. (case 1)
+                    clause2lits[watching_clause].remove(watching_lit)
+                    clause2lits[watching_clause].append(lit)
+                    lit2clauses[watching_lit].remove(watching_clause)
+                    lit2clauses[lit].append(watching_clause)
+                    break
             else:
-                # conflict
-                return ("conflict", clause)
+                # we cannot find another literal to rewatch (case 2,3,4)
+                watching_lits = clause2lits[watching_clause]
+                if len(watching_lits) == 1:
+                    # watching_clause is unit clause, and the only literal
+                    # is assigned False, thus indicates a conflict
+                    return ('conflict', watching_clause)
+               	
+                # the other watching literal
+                other = watching_lits[0] if watching_lits[1] == watching_lit else watching_lits[1]
+                if other.variable not in assignments:
+                    # the other watching literal is unassigned. (case 3)
+                    assignments.assign(other.variable, not other.negation, watching_clause)
+                    to_propagate.insert(0, other)
+                elif assignments.value(other) == True:
+                    # the other watching literal is assigned True. (case 2)
+                    continue
+                else:
+                    # the other watching literal is assigned False. (case 4)
+                    return ('conflict', watching_clause)
 
-    return ("unresolved", None)
+    return ('unresolved', None)
+
 
 
 def resolve(a: Clause, b: Clause, x: int) -> Clause:
@@ -292,7 +375,8 @@ def parse_dimacs_cnf(content: str) -> Formula:
     clauses = [Clause([])]
     for line in content.splitlines():
         tokens = line.split()
-        if len(tokens) != 0 and tokens[0] not in ("p", "c"):
+        if ((len(tokens) != 0 and tokens[0] not in ("p", "c")) and
+                (len(tokens[0]) != 0 and tokens[0][0] != "c")):
             for tok in tokens:
                 lit = int(tok)
                 if lit == 0:
@@ -312,6 +396,8 @@ if __name__ == "__main__":
     # you might comment it to get inconsistent execution time
     random.seed(5201314)
 
+    start_time = time.time()
+
     if len(sys.argv) != 2:
         print("Provide one DIMACS cnf filename as argument.")
         sys.exit(1)
@@ -319,6 +405,9 @@ if __name__ == "__main__":
     dimacs_cnf = open(sys.argv[1]).read()
     formula = parse_dimacs_cnf(dimacs_cnf)
     result = cdcl_solve(formula)
+
+    total_time = time.time() - start_time
+
     if result:
         assert result.satisfy(formula)
         print("sat")
@@ -327,3 +416,5 @@ if __name__ == "__main__":
             print(str(var) + " := " + str(assignment.value).lower())
     else:
         print("unsat")
+
+    print(f"Execution time: {total_time:.6f} seconds")  # Print the execution time
