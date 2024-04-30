@@ -1,7 +1,7 @@
 import sys
 import random
 import time
-from implementation import parse_dimacs_cnf, cdcl_solve
+from cdcl_solver import parse_dimacs_cnf, cdcl_solve
 
 if __name__ == "__main__":
     # you might comment it to get inconsistent execution time
