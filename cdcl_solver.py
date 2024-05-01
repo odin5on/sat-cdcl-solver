@@ -38,6 +38,116 @@ class Assignments(dict):
 
         return True
     
+# class VSIDS:
+#     def __init__(self):
+#         self.scores = {}
+#         self.decay_factor = 0.95
+
+#     def initialize_scores(self, variables):
+#         for var in variables:
+#             self.scores[var] = 0
+
+#     def increment_score(self, clause):
+#         for var in clause:
+#             if var in self.scores:
+#                 self.scores[var] += 1
+#             else:
+#                 self.scores[var] = 1
+
+#     def decay_scores(self):
+#         for var in self.scores:
+#             self.scores[var] *= self.decay_factor
+
+#     def get_best_variable(self):
+#         return max(self.scores, key=self.scores.get)
+
+# import heapq
+
+# class VSIDS:
+#     def __init__(self):
+#         self.scores = {}
+#         self.heap = []
+#         self.decay_factor = 0.95
+#         self.invalidated = set()
+
+#     def initialize_scores(self, variables):
+#         for var in variables:
+#             self.scores[var] = 0
+#             heapq.heappush(self.heap, (-self.scores[var], var))
+
+#     def increment_score(self, clause):
+#         for var in clause:
+#             if var in self.scores:
+#                 self.scores[var] += 1
+#                 # Since we cannot directly increase a key in the heap, push the new score
+#                 heapq.heappush(self.heap, (-self.scores[var], var))
+#                 # Track invalidated entries
+#                 self.invalidated.add((self.scores[var] - 1, var))
+
+#     def decay_scores(self):
+#         # Apply decay to scores
+#         new_heap = []
+#         for var, score in self.scores.items():
+#             new_score = score * self.decay_factor
+#             self.scores[var] = new_score
+#             heapq.heappush(new_heap, (-new_score, var))
+#         self.heap = new_heap
+#         self.invalidated.clear()
+
+#     def get_best_variable(self):
+#         # Pop until you find a valid entry
+#         while self.heap:
+#             score, var = heapq.heappop(self.heap)
+#             if (-score, var) not in self.invalidated:
+#                 # Return the first valid variable found
+#                 return var
+#         return None  # In case all entries are invalidated
+
+import heapq
+
+class VSIDS:
+    def __init__(self):
+        self.scores = {}
+        self.heap = []
+        self.conflict_count = 0
+        self.decay_interval = 256  # Perform decay every 256 conflicts
+
+    def initialize_scores(self, variables):
+        for var in variables:
+            self.scores[var] = 0
+            heapq.heappush(self.heap, (-self.scores[var], var))
+
+    def increment_score(self, clause):
+        for var in clause:
+            if var in self.scores:
+                self.scores[var] += 1
+                # Update the heap with the new score
+                heapq.heappush(self.heap, (-self.scores[var], var))
+
+    def maybe_decay_scores(self):
+        self.conflict_count += 1
+        if self.conflict_count >= self.decay_interval:
+            self.decay_scores()
+            self.conflict_count = 0  # Reset conflict counter after decay
+
+    def decay_scores(self):
+        # Halve scores and rebuild the heap
+        new_heap = []
+        for var, score in self.scores.items():
+            new_score = score / 2
+            self.scores[var] = new_score
+            heapq.heappush(new_heap, (-new_score, var))
+        self.heap = new_heap
+
+    def get_best_variable(self):
+        # Pop from the heap until a valid entry is found
+        while self.heap:
+            score, var = heapq.heappop(self.heap)
+            if -score == self.scores[var]:  # Check if the entry is still valid
+                return var
+        return None
+
+    
 from collections import defaultdict
 def init_watches(formula: Formula):
     """
@@ -72,6 +182,10 @@ def cdcl_solve(formula: Formula) -> Optional[Assignments]:
     """
     assignments = Assignments()
     lit2clauses, clause2lits = init_watches(formula)
+
+    # Initialize VSIDS with all variables in the formula
+    vsids = VSIDS()
+    vsids.initialize_scores(formula.variables())
     
     # First, do unit propagation to assign the initial unit clauses 
     unit_clauses = [clause for clause in formula if len(clause) == 1]
@@ -88,13 +202,17 @@ def cdcl_solve(formula: Formula) -> Optional[Assignments]:
     if reason == 'conflict':
         return None
 
+    conflict_count = 0
+    decay_interval = 256 # TODO can change based on accuracy
+
     while not all_variables_assigned(formula, assignments):
-        var, val = pick_branching_variable(formula, assignments)
+        var, val = pick_branching_variable(formula, assignments, vsids)
+        if var is None:
+            break
         assignments.dl += 1
-        #print("DECISION LEVEL = " + str(assignments.dl))
         assignments.assign(var, val, antecedent=None)
         to_propagate = [Literal(var, not val)]
-        i=0
+        
         while True:
             reason, clause = unit_propagation(assignments, lit2clauses, clause2lits, to_propagate)
             #i+=1
@@ -109,7 +227,7 @@ def cdcl_solve(formula: Formula) -> Optional[Assignments]:
             if b < 0:
                 return None
             
-            add_learnt_clause(formula, learnt_clause, assignments, lit2clauses, clause2lits)
+            add_learnt_clause(formula, learnt_clause, assignments, lit2clauses, clause2lits, vsids)
             backtrack(assignments, b)
             assignments.dl = b
 
@@ -121,12 +239,17 @@ def cdcl_solve(formula: Formula) -> Optional[Assignments]:
             assignments.assign(var, val, antecedent=learnt_clause)
             to_propagate = [Literal(var, not val)]
 
+            if conflict_count % decay_interval == 0:
+                vsids.decay_scores()  # Periodically decay scores
+
     return assignments
 
 
 
-def add_learnt_clause(formula, clause, assignments, lit2clauses, clause2lits):
+def add_learnt_clause(formula, clause, assignments, lit2clauses, clause2lits, vsids: VSIDS):
     formula.clauses.append(clause)
+    vsids.increment_score(clause)  # Update VSIDS scores based on the new learnt clause
+    vsids.maybe_decay_scores()
     for lit in sorted(clause, key=lambda lit: -assignments[lit.variable].dl):
         if len(clause2lits[clause]) < 2:
             clause2lits[clause].append(lit)
@@ -140,13 +263,15 @@ def all_variables_assigned(formula: Formula, assignments: Assignments) -> bool:
     return len(formula.variables()) == len(assignments)
 
 
-def pick_branching_variable(
-    formula: Formula, assignments: Assignments
-) -> Tuple[int, bool]:
+
+def pick_branching_variable(formula: Formula, assignments: Assignments, vsids: VSIDS) -> Tuple[int, bool]:
     unassigned_vars = [var for var in formula.variables() if var not in assignments]
-    var = random.choice(unassigned_vars)
-    val = random.choice([True, False])
-    return (var, val)
+    if unassigned_vars:
+        var = vsids.get_best_variable()  # Use VSIDS to get the best variable
+        val = random.choice([True, False])  # Choose a value randomly or based on some heuristic
+        return var, val
+    return None
+
 
 
 def backtrack(assignments: Assignments, b: int):

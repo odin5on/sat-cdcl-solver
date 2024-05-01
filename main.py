@@ -3,6 +3,8 @@ import random
 import time
 from cdcl_solver import parse_dimacs_cnf, cdcl_solve
 
+# test commit
+
 if __name__ == "__main__":
     # you might comment it to get inconsistent execution time
     random.seed(5201314)
