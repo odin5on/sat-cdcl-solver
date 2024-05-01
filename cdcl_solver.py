@@ -162,7 +162,7 @@ def init_watches(formula: Formula):
             # For unit clause, we watch the only literal
             lit2clauses[clause.literals[0]].append(clause)
             clause2lits[clause].append(clause.literals[0])
-        else:
+        elif len(clause) > 1:
             # For other clause, we choose any 2 literals to watch
             lit2clauses[clause.literals[0]].append(clause)
             lit2clauses[clause.literals[1]].append(clause)
