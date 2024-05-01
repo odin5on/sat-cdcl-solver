@@ -1,7 +1,6 @@
 import sys
 import random
 import time
-from cdcl_solver import parse_dimacs_cnf, cdcl_solve
 
 # test commit
 
@@ -9,13 +8,21 @@ if __name__ == "__main__":
     # you might comment it to get inconsistent execution time
     random.seed(5201314)
 
-    start_time = time.time()
-
-    if len(sys.argv) != 2:
-        print("Provide one DIMACS cnf filename as argument.")
+    if len(sys.argv) != 3:
+        print("Provide one DIMACS cnf filename as argument as well as 'original' or 'vsids' to indicate the solver")
         sys.exit(1)
 
-    dimacs_cnf = open(sys.argv[1]).read()
+    if sys.argv[1] == 'original':
+        from cdcl_solver_original import parse_dimacs_cnf, cdcl_solve
+    elif sys.argv[1] == 'vsids':
+        from cdcl_solver import parse_dimacs_cnf, cdcl_solve
+    else:
+        print("The solver you want to use was indicated incorrectly")
+        sys.exit(1)
+
+    start_time = time.time()
+
+    dimacs_cnf = open(sys.argv[2]).read()
     formula = parse_dimacs_cnf(dimacs_cnf)
     result = cdcl_solve(formula)
 
