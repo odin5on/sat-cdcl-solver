@@ -187,9 +187,7 @@ def clause_status(clause: Clause, assignments: Assignments) -> str:
 
 
 def unit_propagation(assignments, lit2clauses, clause2lits, to_propagate: List[Literal]) -> Tuple[str, Optional[Clause]]:
-    #print("\nUNIT PROPAGATION\n");
     while len(to_propagate) > 0:
-        # print("to_propagate length: " + str(len(to_propagate)))
         watching_lit = to_propagate.pop().neg()
 
         # use list(.) to copy it because size of 

@@ -1,4 +1,4 @@
-import random
+import random, heapq
 from typing import List, Tuple, Optional
 from common_classes import Literal, Clause, Formula, Assignment
 
@@ -37,101 +37,36 @@ class Assignments(dict):
                 return False
 
         return True
-    
-# class VSIDS:
-#     def __init__(self):
-#         self.scores = {}
-#         self.decay_factor = 0.95
 
-#     def initialize_scores(self, variables):
-#         for var in variables:
-#             self.scores[var] = 0
-
-#     def increment_score(self, clause):
-#         for var in clause:
-#             if var in self.scores:
-#                 self.scores[var] += 1
-#             else:
-#                 self.scores[var] = 1
-
-#     def decay_scores(self):
-#         for var in self.scores:
-#             self.scores[var] *= self.decay_factor
-
-#     def get_best_variable(self):
-#         return max(self.scores, key=self.scores.get)
-
-# import heapq
-
-# class VSIDS:
-#     def __init__(self):
-#         self.scores = {}
-#         self.heap = []
-#         self.decay_factor = 0.95
-#         self.invalidated = set()
-
-#     def initialize_scores(self, variables):
-#         for var in variables:
-#             self.scores[var] = 0
-#             heapq.heappush(self.heap, (-self.scores[var], var))
-
-#     def increment_score(self, clause):
-#         for var in clause:
-#             if var in self.scores:
-#                 self.scores[var] += 1
-#                 # Since we cannot directly increase a key in the heap, push the new score
-#                 heapq.heappush(self.heap, (-self.scores[var], var))
-#                 # Track invalidated entries
-#                 self.invalidated.add((self.scores[var] - 1, var))
-
-#     def decay_scores(self):
-#         # Apply decay to scores
-#         new_heap = []
-#         for var, score in self.scores.items():
-#             new_score = score * self.decay_factor
-#             self.scores[var] = new_score
-#             heapq.heappush(new_heap, (-new_score, var))
-#         self.heap = new_heap
-#         self.invalidated.clear()
-
-#     def get_best_variable(self):
-#         # Pop until you find a valid entry
-#         while self.heap:
-#             score, var = heapq.heappop(self.heap)
-#             if (-score, var) not in self.invalidated:
-#                 # Return the first valid variable found
-#                 return var
-#         return None  # In case all entries are invalidated
-
-import heapq
-
+# Heuristically determines which variable to select during decision points by tracking variable occurences in a PQ
 class VSIDS:
     def __init__(self):
-        self.scores = {}
-        self.heap = []
-        self.conflict_count = 0
-        self.decay_interval = 256  # Perform decay every 256 conflicts
+        self.scores = {} # store variable-score pairs for every variable in a formula
+        self.heap = [] # PQ for variable-score pairs, uses functions from heapq module
+        self.conflict_count = 0 # Stores number of conflicts encountered during solving
+        self.decay_interval = 256  # Decays the score every 256 conflicts
 
+    # Initialize the scores of all variables to zero and update the PQ
     def initialize_scores(self, variables):
         for var in variables:
             self.scores[var] = 0
             heapq.heappush(self.heap, (-self.scores[var], var))
 
+    # Increase the score, used when a learned clause is added
     def increment_score(self, clause):
         for var in clause:
             if var in self.scores:
                 self.scores[var] += 1
-                # Update the heap with the new score
                 heapq.heappush(self.heap, (-self.scores[var], var))
 
+    # Check if enough conflicts have taken place for the scores to be decayed
     def maybe_decay_scores(self):
-        self.conflict_count += 1
         if self.conflict_count >= self.decay_interval:
             self.decay_scores()
             self.conflict_count = 0  # Reset conflict counter after decay
 
+    # Decay all scores in half and rebuild the PQ
     def decay_scores(self):
-        # Halve scores and rebuild the heap
         new_heap = []
         for var, score in self.scores.items():
             new_score = score / 2
@@ -139,11 +74,11 @@ class VSIDS:
             heapq.heappush(new_heap, (-new_score, var))
         self.heap = new_heap
 
+    # Pop from the PQ until a valid score is found
     def get_best_variable(self):
-        # Pop from the heap until a valid entry is found
         while self.heap:
             score, var = heapq.heappop(self.heap)
-            if -score == self.scores[var]:  # Check if the entry is still valid
+            if -score == self.scores[var]:  # Check if the score is still valid
                 return var
         return None
 
@@ -202,9 +137,6 @@ def cdcl_solve(formula: Formula) -> Optional[Assignments]:
     if reason == 'conflict':
         return None
 
-    conflict_count = 0
-    decay_interval = 256 # TODO can change based on accuracy
-
     while not all_variables_assigned(formula, assignments):
         var, val = pick_branching_variable(formula, assignments, vsids)
         if var is None:
@@ -215,12 +147,8 @@ def cdcl_solve(formula: Formula) -> Optional[Assignments]:
         
         while True:
             reason, clause = unit_propagation(assignments, lit2clauses, clause2lits, to_propagate)
-            #i+=1
-            #print("unit propagation #" + str(i))
 
             if reason != 'conflict':
-                # no conflict after unit propagation, we back
-                # to the decision (guessing) step
                 break
                 
             b, learnt_clause = conflict_analysis(clause, assignments)
@@ -239,23 +167,15 @@ def cdcl_solve(formula: Formula) -> Optional[Assignments]:
             assignments.assign(var, val, antecedent=learnt_clause)
             to_propagate = [Literal(var, not val)]
 
-            if conflict_count % decay_interval == 0:
-                vsids.decay_scores()  # Periodically decay scores
-
     return assignments
 
 
 
 def add_learnt_clause(formula, clause, assignments, lit2clauses, clause2lits, vsids: VSIDS):
     formula.clauses.append(clause)
-    vsids.increment_score(clause)  # Update VSIDS scores based on the new learnt clause
-    vsids.maybe_decay_scores()
-    # for lit in sorted(clause, key=lambda lit: -assignments[lit.variable].dl):
-    #     if len(clause2lits[clause]) < 2:
-    #         clause2lits[clause].append(lit)
-    #         lit2clauses[lit].append(clause)
-    #     else:
-    #         break
+    vsids.conflict_count += 1 # since a conflict has occurred, increase the counter in the heuristic
+    vsids.increment_score(clause) # update VSIDS scores based on the new learnt clause
+    vsids.maybe_decay_scores() # decays all scores every 256 conflicts, otherwise does nothing
     for lit in sorted(clause, key=lambda lit: -assignments[lit.variable].dl if lit.variable in assignments else float('inf')):
         if len(clause2lits[clause]) < 2:
             clause2lits[clause].append(lit)
@@ -319,9 +239,7 @@ def clause_status(clause: Clause, assignments: Assignments) -> str:
 
 
 def unit_propagation(assignments, lit2clauses, clause2lits, to_propagate: List[Literal]) -> Tuple[str, Optional[Clause]]:
-    #print("\nUNIT PROPAGATION\n");
     while len(to_propagate) > 0:
-        # print("to_propagate length: " + str(len(to_propagate)))
         watching_lit = to_propagate.pop().neg()
 
         # use list(.) to copy it because size of 
@@ -407,23 +325,14 @@ def conflict_analysis(clause: Clause, assignments: Assignments) -> Tuple[int, Cl
 
     # out of the loop, `clause` is now the new learnt clause
     # compute the backtrack level b (second largest decision level)
-    # decision_levels = sorted(
-    #     set(assignments[literal.variable].dl for literal in clause)
-    # )
-
-    decision_levels = {
+    decision_levels = { # store decision levels of every variable in the learnt clause
         assignments[literal.variable].dl
         for literal in clause
-        if literal.variable in assignments
+        if literal.variable in assignments # prevent keyerrors
     }
 
-    # if len(decision_levels) <= 1:
-    #     return 0, clause
-    # else:
-    #     return decision_levels[-2], clause
-
     if len(decision_levels) <= 1:
-        return 0, clause  # Or handle the case where there's less than two decision levels
+        return 0, clause  # Less than two decision levels
     else:
         sorted_decision_levels = sorted(decision_levels, reverse=True)
         if len(sorted_decision_levels) > 1:
