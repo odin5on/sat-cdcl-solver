@@ -137,6 +137,9 @@ def cdcl_solve(formula: Formula) -> Optional[Assignments]:
     if reason == 'conflict':
         return None
 
+    conflict_count = 0
+    decay_interval = 256 # TODO can change based on accuracy
+
     while not all_variables_assigned(formula, assignments):
         var, val = pick_branching_variable(formula, assignments, vsids)
         if var is None:
@@ -166,6 +169,9 @@ def cdcl_solve(formula: Formula) -> Optional[Assignments]:
             val = not literal.negation
             assignments.assign(var, val, antecedent=learnt_clause)
             to_propagate = [Literal(var, not val)]
+
+            if conflict_count % decay_interval == 0:
+                vsids.decay_scores()  # Periodically decay scores
 
     return assignments
 
