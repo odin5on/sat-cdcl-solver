@@ -250,12 +250,19 @@ def add_learnt_clause(formula, clause, assignments, lit2clauses, clause2lits, vs
     formula.clauses.append(clause)
     vsids.increment_score(clause)  # Update VSIDS scores based on the new learnt clause
     vsids.maybe_decay_scores()
-    for lit in sorted(clause, key=lambda lit: -assignments[lit.variable].dl):
+    # for lit in sorted(clause, key=lambda lit: -assignments[lit.variable].dl):
+    #     if len(clause2lits[clause]) < 2:
+    #         clause2lits[clause].append(lit)
+    #         lit2clauses[lit].append(clause)
+    #     else:
+    #         break
+    for lit in sorted(clause, key=lambda lit: -assignments[lit.variable].dl if lit.variable in assignments else float('inf')):
         if len(clause2lits[clause]) < 2:
             clause2lits[clause].append(lit)
             lit2clauses[lit].append(clause)
         else:
             break
+
 
 
 
@@ -365,7 +372,7 @@ def resolve(a: Clause, b: Clause, x: int) -> Clause:
     """
     The resolution operation
     """
-    result = set(a.literals + b.literals) - {Literal(x, True), Literal(x, False)}
+    result = set(a.literals + b.literals) - {Literal(x, True), Literal(x, False)} # TODO this takes a while
     result = list(result)
     return Clause(result)
 
@@ -395,18 +402,35 @@ def conflict_analysis(clause: Clause, assignments: Assignments) -> Tuple[int, Cl
         literals = [
             literal
             for literal in clause
-            if assignments[literal.variable].dl == assignments.dl
+            if literal.variable in assignments and assignments[literal.variable].dl == assignments.dl #TODO takes time
         ]
 
     # out of the loop, `clause` is now the new learnt clause
     # compute the backtrack level b (second largest decision level)
-    decision_levels = sorted(
-        set(assignments[literal.variable].dl for literal in clause)
-    )
+    # decision_levels = sorted(
+    #     set(assignments[literal.variable].dl for literal in clause)
+    # )
+
+    decision_levels = {
+        assignments[literal.variable].dl
+        for literal in clause
+        if literal.variable in assignments
+    }
+
+    # if len(decision_levels) <= 1:
+    #     return 0, clause
+    # else:
+    #     return decision_levels[-2], clause
+
     if len(decision_levels) <= 1:
-        return 0, clause
+        return 0, clause  # Or handle the case where there's less than two decision levels
     else:
-        return decision_levels[-2], clause
+        sorted_decision_levels = sorted(decision_levels, reverse=True)
+        if len(sorted_decision_levels) > 1:
+            return sorted_decision_levels[1], clause  # Access the second largest decision level
+        else:
+            return sorted_decision_levels[0], clause  # Fallback if there's only one unique decision level
+
 
 
 def parse_dimacs_cnf(content: str) -> Formula:
