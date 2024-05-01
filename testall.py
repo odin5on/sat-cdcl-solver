@@ -4,8 +4,19 @@ import random
 import time
 import signal
 from prettytable import PrettyTable
-from cdcl_solver import parse_dimacs_cnf, cdcl_solve
 
+
+if len(sys.argv) != 3:
+    print("Provide a timeout interval in seconds. And specify if you want to run the original solver or vsids")
+    sys.exit(1)
+
+if sys.argv[1] == 'original':
+    from cdcl_solver_original import parse_dimacs_cnf, cdcl_solve
+elif sys.argv[1] == 'vsids':
+    from cdcl_solver import parse_dimacs_cnf, cdcl_solve
+else:
+    print("The solver you want to use was indicated incorrectly")
+    sys.exit(1)
 
 def handler(signum, frame):
     raise TimeoutError("Timeout")
@@ -50,11 +61,8 @@ def test_files_in_directory(directory, outputtable, timeout):
         print("finished file", file)
 
 
-if len(sys.argv) != 2:
-    print("Provide a timeout interval in seconds.")
-    sys.exit(1)
 
-timeoutduration = int(sys.argv[1])
+timeoutduration = int(sys.argv[2])
 
 sat_directory = "./project1-revised-tests/sat"
 unsat_directory = "./project1-revised-tests/unsat"
