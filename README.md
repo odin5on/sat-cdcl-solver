@@ -9,6 +9,8 @@ We implemented a SAT solver that implements Conflict-Driven Clause Learning (CDC
 
 To run our solver you only need to have python installed. We are using __Python 3.8.5__ and it should work with this and newer. We think it will work with older versions but we do not guarentee.
 
+You will need the [PrettyTable](https://pypi.org/project/prettytable/) library to run testall.py. Follow the link for installation guide.
+
 To run on a specific file run: ```python main.py <original | vsids> <path to file>```.  
 The path to file should be a relative path. You can only indicate 'original' or 'vsids' as one of the solvers. If you type it wrong it will give an error and tell you to specify correctly  .
 For example if you are in the root directory of this repository you can run ```python main.py original project1-revised-tests/sat/block0.cnf```.
