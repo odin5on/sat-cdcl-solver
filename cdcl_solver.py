@@ -44,7 +44,7 @@ class VSIDS:
         self.scores = {} # store variable-score pairs for every variable in a formula
         self.heap = [] # PQ for variable-score pairs, uses functions from heapq module
         self.conflict_count = 0 # Stores number of conflicts encountered during solving
-        self.decay_interval = 256  # Decays the score every 256 conflicts
+        self.decay_interval = 4096  # Decays the score every 256 conflicts
 
     # Initialize the scores of all variables to zero and update the PQ
     def initialize_scores(self, variables):
